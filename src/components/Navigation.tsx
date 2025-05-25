@@ -58,8 +58,17 @@ const Navigation = () => {
             ))}
           </div>
 
-          {/* User Menu & Mobile Toggle */}
+          {/* Chat Button & User Menu */}
           <div className="flex items-center space-x-4">
+            {/* Chat Button */}
+            <Button 
+              onClick={() => navigate("/chat")}
+              className="gradient-bg text-white hover:opacity-90 transition-opacity"
+            >
+              <MessageCircle className="w-4 h-4 mr-2" />
+              <span className="hidden sm:inline">AI Chat</span>
+            </Button>
+
             <div className="flex items-center space-x-2">
               <span className="hidden sm:block text-sm text-gray-600">
                 Hi, {user?.firstName || "User"}!

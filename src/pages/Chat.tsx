@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Send, Bot, User, BookOpen, Lightbulb, HelpCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import GeminiService from "@/services/geminiService";
 
 interface Message {
   id: string;
@@ -23,6 +24,8 @@ const Chat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini-api-key') || "");
+  const [showApiKeyInput, setShowApiKeyInput] = useState(!apiKey);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -32,7 +35,7 @@ const Chat = () => {
       id: "welcome",
       content: subject 
         ? `Hello! I'm your AI tutor for ${subject}. What would you like to learn today?`
-        : "Hello! I'm your AI tutor. I can help you with any subject. What would you like to learn today?",
+        : "Hello! I'm your AI tutor powered by Gemini AI. I can help you with any subject. What would you like to learn today?",
       sender: "ai",
       timestamp: new Date(),
       subject
@@ -48,18 +51,24 @@ const Chat = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const simulateAIResponse = (userMessage: string): string => {
-    // Simple AI simulation - in real app this would call your AI service
-    const responses = [
-      "That's a great question! Let me help you understand this concept step by step.",
-      "I can see you're working on this topic. Here's how I'd approach this problem...",
-      "Excellent! You're on the right track. Let me provide some additional insights.",
-      "This is a common area where students need clarification. Let me break it down for you.",
-      "Perfect question for learning! Here's what you need to know about this topic."
-    ];
-    
-    return responses[Math.floor(Math.random() * responses.length)] + 
-           ` (This is a demo response to: "${userMessage.substring(0, 50)}...")`;
+  const saveApiKey = (key: string) => {
+    localStorage.setItem('gemini-api-key', key);
+    setApiKey(key);
+    setShowApiKeyInput(false);
+  };
+
+  const getAIResponse = async (userMessage: string): Promise<string> => {
+    if (!apiKey) {
+      return "Please provide your Gemini API key to start chatting with AI.";
+    }
+
+    try {
+      const geminiService = new GeminiService(apiKey);
+      return await geminiService.getChatResponse(userMessage);
+    } catch (error) {
+      console.error('Error getting AI response:', error);
+      return "Sorry, I'm having trouble connecting to the AI service. Please check your API key and try again.";
+    }
   };
 
   const handleSend = async () => {
@@ -77,19 +86,27 @@ const Chat = () => {
     setInput("");
     setIsTyping(true);
 
-    // Simulate AI processing time
-    setTimeout(() => {
+    try {
+      const aiResponseText = await getAIResponse(input);
+      
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
-        content: simulateAIResponse(input),
+        content: aiResponseText,
         sender: "ai",
         timestamp: new Date(),
         subject
       };
 
       setMessages(prev => [...prev, aiResponse]);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to get AI response. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
       setIsTyping(false);
-    }, 1000 + Math.random() * 2000);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -122,21 +139,54 @@ const Chat = () => {
               {subject ? `${subject} Tutor` : "AI Tutor Chat"}
             </h1>
             <p className="text-gray-600">
-              Get personalized help and explanations for any topic
+              Get personalized help powered by Gemini AI
             </p>
           </div>
+
+          {showApiKeyInput && (
+            <Card className="mb-6 border-yellow-200 bg-yellow-50">
+              <CardContent className="p-4">
+                <h3 className="font-semibold mb-2">Gemini API Key Required</h3>
+                <p className="text-sm text-gray-600 mb-3">
+                  To use AI features, please enter your Gemini API key. You can get one from Google AI Studio.
+                </p>
+                <div className="flex space-x-2">
+                  <Input
+                    type="password"
+                    placeholder="Enter your Gemini API key"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                  <Button onClick={() => saveApiKey(apiKey)} disabled={!apiKey}>
+                    Save
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="h-[600px] flex flex-col">
             {/* Chat Header */}
             <div className="p-4 border-b bg-gradient-to-r from-purple-50 to-blue-50">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 gradient-bg rounded-full flex items-center justify-center">
-                  <Bot className="w-5 h-5 text-white" />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 gradient-bg rounded-full flex items-center justify-center">
+                    <Bot className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold">Gemini AI Tutor</h3>
+                    <p className="text-sm text-gray-600">Online • Ready to help</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-semibold">AI Tutor</h3>
-                  <p className="text-sm text-gray-600">Online • Ready to help</p>
-                </div>
+                {apiKey && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowApiKeyInput(true)}
+                  >
+                    Change API Key
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -234,8 +284,9 @@ const Chat = () => {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyPress={handleKeyPress}
                   className="flex-1"
+                  disabled={!apiKey}
                 />
-                <Button onClick={handleSend} disabled={!input.trim() || isTyping}>
+                <Button onClick={handleSend} disabled={!input.trim() || isTyping || !apiKey}>
                   <Send className="w-4 h-4" />
                 </Button>
               </div>
