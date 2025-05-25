@@ -7,9 +7,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Bot, User, BookOpen, Lightbulb, HelpCircle } from "lucide-react";
+import { Send, Bot, User, Sparkles, MessageCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useUser } from "@clerk/clerk-react";
 import GeminiService from "@/services/geminiService";
+import MongoService from "@/services/mongoService";
 
 interface Message {
   id: string;
@@ -21,27 +23,35 @@ interface Message {
 
 const Chat = () => {
   const { subject } = useParams();
+  const { user } = useUser();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini-api-key') || "");
-  const [showApiKeyInput, setShowApiKeyInput] = useState(!apiKey);
+  const [chatId, setChatId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+
+  const geminiService = new GeminiService();
+  const mongoService = new MongoService();
 
   useEffect(() => {
     // Initialize with welcome message
     const welcomeMessage: Message = {
       id: "welcome",
       content: subject 
-        ? `Hello! I'm your AI tutor for ${subject}. What would you like to learn today?`
-        : "Hello! I'm your AI tutor powered by Gemini AI. I can help you with any subject. What would you like to learn today?",
+        ? `Hello ${user?.firstName || 'there'}! I'm your AI tutor for ${subject}. I'm powered by advanced AI and ready to help you master this subject. What would you like to learn today?`
+        : `Hello ${user?.firstName || 'there'}! I'm your AI tutor powered by Gemini AI. I can help you with any subject and adapt to your learning style. What would you like to explore today?`,
       sender: "ai",
       timestamp: new Date(),
       subject
     };
     setMessages([welcomeMessage]);
-  }, [subject]);
+    
+    // Create new chat session
+    if (user) {
+      initializeChat();
+    }
+  }, [subject, user]);
 
   useEffect(() => {
     scrollToBottom();
@@ -51,28 +61,34 @@ const Chat = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const saveApiKey = (key: string) => {
-    localStorage.setItem('gemini-api-key', key);
-    setApiKey(key);
-    setShowApiKeyInput(false);
+  const initializeChat = async () => {
+    if (!user) return;
+    
+    try {
+      const chatData = {
+        subject: subject || 'general',
+        messages: [],
+        startedAt: new Date()
+      };
+      
+      const result = await mongoService.saveChat(chatData, user.id);
+      setChatId(result.insertedId);
+    } catch (error) {
+      console.error('Error initializing chat:', error);
+    }
   };
 
   const getAIResponse = async (userMessage: string): Promise<string> => {
-    if (!apiKey) {
-      return "Please provide your Gemini API key to start chatting with AI.";
-    }
-
     try {
-      const geminiService = new GeminiService(apiKey);
-      return await geminiService.getChatResponse(userMessage);
+      return await geminiService.getChatResponse(userMessage, subject);
     } catch (error) {
       console.error('Error getting AI response:', error);
-      return "Sorry, I'm having trouble connecting to the AI service. Please check your API key and try again.";
+      return "I apologize, but I'm having trouble processing your request right now. Please try again in a moment.";
     }
   };
 
   const handleSend = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() || !user) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -97,7 +113,14 @@ const Chat = () => {
         subject
       };
 
+      const updatedMessages = [...messages, userMessage, aiResponse];
       setMessages(prev => [...prev, aiResponse]);
+
+      // Save to MongoDB
+      if (chatId) {
+        await mongoService.updateChat(chatId, updatedMessages);
+      }
+
     } catch (error) {
       toast({
         title: "Error",
@@ -117,14 +140,15 @@ const Chat = () => {
   };
 
   const quickPrompts = [
-    "Explain this concept",
-    "Give me an example",
-    "How do I solve this?",
-    "What's the next step?"
+    "Explain this concept step by step",
+    "Give me a practical example",
+    "How do I solve this problem?",
+    "What should I learn next?",
+    "Create a practice exercise"
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-gray-900 dark:to-blue-900">
       <Navigation />
       
       <main className="container mx-auto px-4 pt-24 pb-8">
@@ -138,55 +162,28 @@ const Chat = () => {
             <h1 className="text-3xl font-bold gradient-text mb-2">
               {subject ? `${subject} Tutor` : "AI Tutor Chat"}
             </h1>
-            <p className="text-gray-600">
+            <p className="text-gray-600 dark:text-gray-400">
               Get personalized help powered by Gemini AI
             </p>
           </div>
 
-          {showApiKeyInput && (
-            <Card className="mb-6 border-yellow-200 bg-yellow-50">
-              <CardContent className="p-4">
-                <h3 className="font-semibold mb-2">Gemini API Key Required</h3>
-                <p className="text-sm text-gray-600 mb-3">
-                  To use AI features, please enter your Gemini API key. You can get one from Google AI Studio.
-                </p>
-                <div className="flex space-x-2">
-                  <Input
-                    type="password"
-                    placeholder="Enter your Gemini API key"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                  />
-                  <Button onClick={() => saveApiKey(apiKey)} disabled={!apiKey}>
-                    Save
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card className="h-[600px] flex flex-col">
+          <Card className="h-[600px] flex flex-col shadow-xl border-2 border-purple-200 dark:border-purple-800">
             {/* Chat Header */}
-            <div className="p-4 border-b bg-gradient-to-r from-purple-50 to-blue-50">
+            <div className="p-4 border-b bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 gradient-bg rounded-full flex items-center justify-center">
-                    <Bot className="w-5 h-5 text-white" />
+                    <Sparkles className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <h3 className="font-semibold">Gemini AI Tutor</h3>
-                    <p className="text-sm text-gray-600">Online • Ready to help</p>
+                    <h3 className="font-semibold text-gray-800 dark:text-gray-200">Gemini AI Tutor</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Online • Ready to help</p>
                   </div>
                 </div>
-                {apiKey && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowApiKeyInput(true)}
-                  >
-                    Change API Key
-                  </Button>
-                )}
+                <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
+                  <MessageCircle className="w-4 h-4" />
+                  <span>{messages.length - 1} messages</span>
+                </div>
               </div>
             </div>
 
@@ -201,12 +198,12 @@ const Chat = () => {
                     transition={{ duration: 0.3 }}
                     className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    <div className={`flex items-start space-x-2 max-w-[70%] ${
+                    <div className={`flex items-start space-x-2 max-w-[80%] ${
                       message.sender === "user" ? "flex-row-reverse space-x-reverse" : ""
                     }`}>
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
                         message.sender === "user" 
-                          ? "bg-purple-100 text-purple-600" 
+                          ? "bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-400" 
                           : "gradient-bg text-white"
                       }`}>
                         {message.sender === "user" ? (
@@ -215,14 +212,14 @@ const Chat = () => {
                           <Bot className="w-4 h-4" />
                         )}
                       </div>
-                      <div className={`rounded-lg p-3 ${
+                      <div className={`rounded-lg p-3 shadow-md ${
                         message.sender === "user"
                           ? "bg-purple-600 text-white"
-                          : "bg-gray-100 text-gray-800"
+                          : "bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-200 dark:border-gray-700"
                       }`}>
-                        <p className="text-sm">{message.content}</p>
+                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                         <p className={`text-xs mt-1 ${
-                          message.sender === "user" ? "text-purple-200" : "text-gray-500"
+                          message.sender === "user" ? "text-purple-200" : "text-gray-500 dark:text-gray-400"
                         }`}>
                           {message.timestamp.toLocaleTimeString()}
                         </p>
@@ -241,11 +238,11 @@ const Chat = () => {
                       <div className="w-8 h-8 gradient-bg rounded-full flex items-center justify-center">
                         <Bot className="w-4 h-4 text-white" />
                       </div>
-                      <div className="bg-gray-100 rounded-lg p-3">
+                      <div className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-700">
                         <div className="flex space-x-1">
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }} />
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }} />
+                          <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" />
+                          <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }} />
+                          <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }} />
                         </div>
                       </div>
                     </div>
@@ -257,8 +254,8 @@ const Chat = () => {
 
             {/* Quick Prompts */}
             {messages.length <= 1 && (
-              <div className="p-4 border-t bg-gray-50">
-                <p className="text-sm text-gray-600 mb-2">Quick prompts:</p>
+              <div className="p-4 border-t bg-gray-50 dark:bg-gray-900/50">
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Quick prompts:</p>
                 <div className="flex flex-wrap gap-2">
                   {quickPrompts.map((prompt) => (
                     <Button
@@ -266,7 +263,7 @@ const Chat = () => {
                       variant="outline"
                       size="sm"
                       onClick={() => setInput(prompt)}
-                      className="text-xs"
+                      className="text-xs hover:bg-purple-50 dark:hover:bg-purple-900/20 border-purple-200 dark:border-purple-800"
                     >
                       {prompt}
                     </Button>
@@ -276,17 +273,20 @@ const Chat = () => {
             )}
 
             {/* Input */}
-            <div className="p-4 border-t">
+            <div className="p-4 border-t bg-white dark:bg-gray-800">
               <div className="flex space-x-2">
                 <Input
                   placeholder="Ask me anything about your studies..."
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyPress={handleKeyPress}
-                  className="flex-1"
-                  disabled={!apiKey}
+                  className="flex-1 border-purple-200 dark:border-purple-800 focus:border-purple-500"
                 />
-                <Button onClick={handleSend} disabled={!input.trim() || isTyping || !apiKey}>
+                <Button 
+                  onClick={handleSend} 
+                  disabled={!input.trim() || isTyping}
+                  className="gradient-bg text-white hover:opacity-90"
+                >
                   <Send className="w-4 h-4" />
                 </Button>
               </div>
